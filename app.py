@@ -119,6 +119,12 @@ st.markdown("""
 
 DATASET_PATH = "census-income.csv"
 
+def get_safe_index(options, target_item, default_index=0):
+    options_list = list(options)
+    if target_item in options_list:
+        return options_list.index(target_item)
+    return min(default_index, max(0, len(options_list) - 1)) if options_list else 0
+
 @st.cache_data
 def load_data():
     if not os.path.exists(DATASET_PATH):
@@ -127,7 +133,7 @@ def load_data():
     df = pd.read_csv(DATASET_PATH)
     # Strip whitespace from string entries
     for col in df.columns:
-        if df[col].dtype == 'object':
+        if not pd.api.types.is_numeric_dtype(df[col]):
             df[col] = df[col].astype(str).str.strip()
     return df
 
@@ -137,9 +143,9 @@ def train_model(df, max_depth, test_size, criterion):
     encoders = {}
     
     for col in data_encoded.columns:
-        if data_encoded[col].dtype == 'object':
+        if not pd.api.types.is_numeric_dtype(data_encoded[col]):
             le = LabelEncoder()
-            data_encoded[col] = le.fit_transform(data_encoded[col])
+            data_encoded[col] = le.fit_transform(data_encoded[col].astype(str))
             encoders[col] = le
             
     X = data_encoded.drop('annual_income', axis=1)
@@ -232,23 +238,23 @@ with tab1:
     
     with col1:
         age = st.slider("Age", min_value=17, max_value=90, value=38)
-        workclass = st.selectbox("Workclass", options=encoders['workclass'].classes_, index=4) # Default Private
+        workclass = st.selectbox("Workclass", options=encoders['workclass'].classes_, index=get_safe_index(encoders['workclass'].classes_, 'Private', 4))
         fnlwgt = st.number_input("Fnlwgt (Final Weight)", min_value=10000, max_value=1500000, value=180000, step=10000)
-        education = st.selectbox("Education Level", options=encoders['education'].classes_, index=9) # Default Bachelors/HS-grad
+        education = st.selectbox("Education Level", options=encoders['education'].classes_, index=get_safe_index(encoders['education'].classes_, 'Bachelors', 9))
         education_num = st.slider("Education Num (Years)", min_value=1, max_value=16, value=13)
         
     with col2:
-        marital_status = st.selectbox("Marital Status", options=encoders['marital-status'].classes_, index=2)
-        occupation = st.selectbox("Occupation", options=encoders['occupation'].classes_, index=4)
-        relationship = st.selectbox("Relationship", options=encoders['relationship'].classes_, index=0)
-        race = st.selectbox("Race", options=encoders['race'].classes_, index=4)
-        sex = st.radio("Sex", options=encoders['sex'].classes_, index=1, horizontal=True)
+        marital_status = st.selectbox("Marital Status", options=encoders['marital-status'].classes_, index=get_safe_index(encoders['marital-status'].classes_, 'Married-civ-spouse', 2))
+        occupation = st.selectbox("Occupation", options=encoders['occupation'].classes_, index=get_safe_index(encoders['occupation'].classes_, 'Prof-specialty', 4))
+        relationship = st.selectbox("Relationship", options=encoders['relationship'].classes_, index=get_safe_index(encoders['relationship'].classes_, 'Husband', 0))
+        race = st.selectbox("Race", options=encoders['race'].classes_, index=get_safe_index(encoders['race'].classes_, 'White', 4))
+        sex = st.radio("Sex", options=encoders['sex'].classes_, index=get_safe_index(encoders['sex'].classes_, 'Male', 1), horizontal=True)
         
     with col3:
         capital_gain = st.number_input("Capital Gain ($)", min_value=0, max_value=100000, value=0, step=500)
         capital_loss = st.number_input("Capital Loss ($)", min_value=0, max_value=5000, value=0, step=100)
         hours_per_week = st.slider("Hours per Week", min_value=1, max_value=99, value=40)
-        native_country = st.selectbox("Native Country", options=encoders['native-country'].classes_, index=39) # Default United-States
+        native_country = st.selectbox("Native Country", options=encoders['native-country'].classes_, index=get_safe_index(encoders['native-country'].classes_, 'United-States', 39))
 
     st.markdown("<br>", unsafe_allow_html=True)
     
@@ -271,13 +277,18 @@ with tab1:
             'native-country': encoders['native-country'].transform([native_country])[0]
         }
         
-        input_df = pd.DataFrame([input_data])
+        input_df = pd.DataFrame([input_data])[X_train.columns]
         prediction = model.predict(input_df)[0]
         probabilities = model.predict_proba(input_df)[0]
         
         income_label = encoders['annual_income'].inverse_transform([prediction])[0]
-        prob_high = probabilities[1] * 100
-        prob_low = probabilities[0] * 100
+        
+        high_idx = np.where(encoders['annual_income'].classes_ == '>50K')[0]
+        high_income_index = high_idx[0] if len(high_idx) > 0 else 1
+        low_income_index = 1 - high_income_index
+        
+        prob_high = probabilities[high_income_index] * 100
+        prob_low = probabilities[low_income_index] * 100
         
         if income_label == '>50K':
             st.markdown(f"""
@@ -300,8 +311,8 @@ with tab1:
         res_col1, res_col2 = st.columns(2)
         with res_col1:
             st.markdown("#### Class Probability Breakdown")
-            st.progress(probabilities[1], text=f">50K Probability: {prob_high:.1f}%")
-            st.progress(probabilities[0], text=f"<=50K Probability: {prob_low:.1f}%")
+            st.progress(float(probabilities[high_income_index]), text=f">50K Probability: {prob_high:.1f}%")
+            st.progress(float(probabilities[low_income_index]), text=f"<=50K Probability: {prob_low:.1f}%")
             
         with res_col2:
             st.markdown("#### Input Summary")
@@ -323,7 +334,7 @@ with tab2:
     with eda_col1:
         st.markdown("##### Target Class Distribution")
         fig, ax = plt.subplots(figsize=(6, 4))
-        sns.countplot(x='annual_income', data=df, palette=['#38BDF8', '#818CF8'], ax=ax)
+        sns.countplot(x='annual_income', data=df, hue='annual_income', palette=['#38BDF8', '#818CF8'], legend=False, ax=ax)
         ax.set_title("Annual Income Class Counts", fontsize=12, pad=10)
         ax.set_xlabel("Income Class")
         ax.set_ylabel("Count")
@@ -344,7 +355,7 @@ with tab2:
     with eda_col3:
         st.markdown("##### Hours Per Week vs Annual Income")
         fig, ax = plt.subplots(figsize=(6, 4))
-        sns.boxplot(x='annual_income', y='hours-per-week', data=df, palette=['#6366F1', '#EC4899'], ax=ax)
+        sns.boxplot(x='annual_income', y='hours-per-week', data=df, hue='annual_income', palette=['#6366F1', '#EC4899'], legend=False, ax=ax)
         ax.set_title("Working Hours Distribution", fontsize=12, pad=10)
         ax.set_xlabel("Annual Income")
         ax.set_ylabel("Hours Per Week")
@@ -354,7 +365,7 @@ with tab2:
         st.markdown("##### Education Num vs High Income (>50K) Proportion")
         edu_income = df.groupby('education-num')['annual_income'].apply(lambda x: (x == '>50K').mean() * 100).reset_index()
         fig, ax = plt.subplots(figsize=(6, 4))
-        sns.barplot(x='education-num', y='annual_income', data=edu_income, palette='viridis', ax=ax)
+        sns.barplot(x='education-num', y='annual_income', data=edu_income, hue='education-num', palette='viridis', legend=False, ax=ax)
         ax.set_title("High Income Ratio by Education Years", fontsize=12, pad=10)
         ax.set_xlabel("Education Years (education-num)")
         ax.set_ylabel("% Earning >50K")
@@ -384,7 +395,7 @@ with tab3:
         feat_df = pd.DataFrame({'Feature': feature_names, 'Importance': importances}).sort_values('Importance', ascending=False)
         
         fig, ax = plt.subplots(figsize=(6, 4.5))
-        sns.barplot(x='Importance', y='Feature', data=feat_df, palette='Blues_r', ax=ax)
+        sns.barplot(x='Importance', y='Feature', data=feat_df, hue='Feature', palette='Blues_r', legend=False, ax=ax)
         ax.set_title("Decision Tree Feature Importances")
         st.pyplot(fig)
         
