@@ -131,13 +131,14 @@ def load_data():
         st.error(f"Dataset file '{DATASET_PATH}' not found in root folder.")
         st.stop()
     df = pd.read_csv(DATASET_PATH)
-    # Strip whitespace from string entries
+    # Strip whitespace from column names and string entries
+    df.columns = df.columns.str.strip()
     for col in df.columns:
         if not pd.api.types.is_numeric_dtype(df[col]):
             df[col] = df[col].astype(str).str.strip()
     return df
 
-@st.cache_resource
+@st.cache_data
 def train_model(df, max_depth, test_size, criterion):
     data_encoded = df.copy()
     encoders = {}
@@ -145,11 +146,12 @@ def train_model(df, max_depth, test_size, criterion):
     for col in data_encoded.columns:
         if not pd.api.types.is_numeric_dtype(data_encoded[col]):
             le = LabelEncoder()
-            data_encoded[col] = le.fit_transform(data_encoded[col].astype(str))
+            encoded_vals = le.fit_transform(data_encoded[col].astype(str))
+            data_encoded[col] = pd.Series(encoded_vals, index=data_encoded.index, dtype=np.int64)
             encoders[col] = le
             
-    X = data_encoded.drop('annual_income', axis=1)
-    y = data_encoded['annual_income']
+    X = data_encoded.drop('annual_income', axis=1).astype(np.float64)
+    y = data_encoded['annual_income'].astype(np.int64)
     
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=34
@@ -277,7 +279,7 @@ with tab1:
             'native-country': encoders['native-country'].transform([native_country])[0]
         }
         
-        input_df = pd.DataFrame([input_data])[X_train.columns]
+        input_df = pd.DataFrame([input_data])[X_train.columns].astype(np.float64)
         prediction = model.predict(input_df)[0]
         probabilities = model.predict_proba(input_df)[0]
         
