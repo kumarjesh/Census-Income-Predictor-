@@ -125,6 +125,11 @@ def get_safe_index(options, target_item, default_index=0):
         return options_list.index(target_item)
     return min(default_index, max(0, len(options_list) - 1)) if options_list else 0
 
+CATEGORICAL_COLS = [
+    'workclass', 'education', 'marital-status', 'occupation', 
+    'relationship', 'race', 'sex', 'native-country', 'annual_income'
+]
+
 @st.cache_data
 def load_data():
     if not os.path.exists(DATASET_PATH):
@@ -134,7 +139,7 @@ def load_data():
     # Strip whitespace from column names and string entries
     df.columns = df.columns.str.strip()
     for col in df.columns:
-        if not pd.api.types.is_numeric_dtype(df[col]):
+        if col in CATEGORICAL_COLS or not pd.api.types.is_numeric_dtype(df[col]):
             df[col] = df[col].astype(str).str.strip()
     return df
 
@@ -144,13 +149,13 @@ def train_model(df, max_depth, test_size, criterion):
     encoders = {}
     
     for col in data_encoded.columns:
-        if not pd.api.types.is_numeric_dtype(data_encoded[col]):
+        if col in CATEGORICAL_COLS or not pd.api.types.is_numeric_dtype(data_encoded[col]) or data_encoded[col].dtype == object:
             le = LabelEncoder()
             encoded_vals = le.fit_transform(data_encoded[col].astype(str))
             data_encoded[col] = pd.Series(encoded_vals, index=data_encoded.index, dtype=np.int64)
             encoders[col] = le
             
-    X = data_encoded.drop('annual_income', axis=1).astype(np.float64)
+    X = data_encoded.drop('annual_income', axis=1).apply(pd.to_numeric, errors='coerce').fillna(0).astype(np.float64)
     y = data_encoded['annual_income'].astype(np.int64)
     
     X_train, X_test, y_train, y_test = train_test_split(
